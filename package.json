@@ -1,0 +1,34 @@
+{
+  "name": "super-whisper",
+  "version": "1.0.0",
+  "description": "Voice-to-text transcription app",
+  "main": "index.js",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chiliwax/super-whisper.git"
+  },
+  "keywords": [
+    "voice",
+    "transcription",
+    "whisper",
+    "speech-to-text"
+  ],
+  "author": "SuperWhisper",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/chiliwax/super-whisper/issues"
+  },
+  "homepage": "https://github.com/chiliwax/super-whisper#readme",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.6"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.1"
+  }
+}

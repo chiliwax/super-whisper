@@ -1,0 +1,345 @@
+/* SuperWhisper Styles */
+
+:root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-overlay: rgba(26, 26, 46, 0.95);
+    --text-primary: #eee;
+    --text-secondary: #aaa;
+    --accent: #e94560;
+    --accent-glow: rgba(233, 69, 96, 0.4);
+    --success: #4ade80;
+    --border-radius: 12px;
+    --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--font-family);
+    background: transparent;
+    color: var(--text-primary);
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* ==================== OVERLAY STYLES ==================== */
+
+body.overlay {
+    background: transparent;
+}
+
+#overlay-container {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    background: var(--bg-overlay);
+    border-radius: var(--border-radius);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.recording-indicator {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.recording-dot {
+    width: 12px;
+    height: 12px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.pulse-ring {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    animation: pulse 1.5s ease-out infinite;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(0.8);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1.6);
+        opacity: 0;
+    }
+}
+
+.info-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.status-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.timer {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+#waveform {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+}
+
+/* Status states */
+#overlay-container.transcribing .status-text {
+    color: var(--text-secondary);
+}
+
+#overlay-container.transcribing .recording-dot {
+    background: var(--text-secondary);
+    animation: blink 0.8s ease-in-out infinite;
+}
+
+#overlay-container.transcribing .pulse-ring {
+    display: none;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+#overlay-container.done .recording-dot {
+    background: var(--success);
+}
+
+/* ==================== SETTINGS STYLES ==================== */
+
+body.settings {
+    background: var(--bg-primary);
+    min-height: 100vh;
+}
+
+#settings-container {
+    padding: 32px;
+    max-width: 450px;
+    margin: 0 auto;
+}
+
+#settings-container h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 32px;
+    background: linear-gradient(135deg, var(--text-primary), var(--accent));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.setting-group {
+    margin-bottom: 24px;
+}
+
+.setting-group label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.setting-group label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.setting-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+
+select, input[type="text"] {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: var(--font-family);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+select:focus, input[type="text"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.hotkey-capture {
+    display: flex;
+    gap: 8px;
+}
+
+.hotkey-capture input {
+    flex: 1;
+    cursor: pointer;
+}
+
+.hotkey-capture input:focus {
+    border-color: var(--accent);
+}
+
+.btn-primary, .btn-secondary {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    font-family: var(--font-family);
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: white;
+    width: 100%;
+}
+
+.btn-primary:hover {
+    background: #d63850;
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.actions {
+    margin-top: 32px;
+}
+
+.version-info {
+    text-align: center;
+    margin-top: 32px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* Warning Banner */
+.warning-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    margin-bottom: 24px;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 10px;
+}
+
+.warning-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.warning-content {
+    flex: 1;
+}
+
+.warning-content strong {
+    display: block;
+    color: #fbbf24;
+    margin-bottom: 4px;
+}
+
+.warning-content p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.btn-warning {
+    padding: 8px 16px;
+    background: #fbbf24;
+    color: #1a1a2e;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: var(--font-family);
+}
+
+.btn-warning:hover {
+    background: #f59e0b;
+    transform: translateY(-1px);
+}
+
+/* Microphone row */
+.microphone-row {
+    display: flex;
+    gap: 8px;
+}
+
+.microphone-row select {
+    flex: 1;
+}
+
+.btn-icon {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: var(--bg-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-icon:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: rotate(180deg);
+}

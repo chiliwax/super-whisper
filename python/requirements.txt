@@ -1,0 +1,16 @@
+# SuperWhisper Python Backend Dependencies
+
+# ASR Engine
+onnx-asr>=0.10.0
+
+# Audio capture
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Auto-typing (cross-platform)
+pyautogui>=0.9.54
+pyperclip>=1.8.2
+
+# For macOS keyboard support (optional, for standalone mode)
+pynput>=1.7.6

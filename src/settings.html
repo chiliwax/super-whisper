@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SuperWhisper</title>
+    <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="app-icon">🎙️</div>
+            <div class="header-text">
+                <h1>SuperWhisper</h1>
+                <p class="subtitle">Voice to Text</p>
+            </div>
+        </header>
+
+        <!-- Accessibility Warning -->
+        <div id="accessibility-warning" class="alert" style="display: none;">
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+                <strong>Accessibility Required</strong>
+                <span>Grant access to detect hotkeys</span>
+            </div>
+            <button id="open-accessibility" class="alert-action">Fix</button>
+        </div>
+
+        <!-- Settings Groups -->
+        <div class="settings-list">
+            <!-- Audio Section -->
+            <div class="section">
+                <div class="section-title">Audio</div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="setting-icon">🎤</span>
+                        <span>Microphone</span>
+                    </div>
+                    <div class="setting-control row">
+                        <select id="microphone">
+                            <option value="">Loading...</option>
+                        </select>
+                        <button id="refresh-devices" class="btn-icon" title="Refresh">↻</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Section -->
+            <div class="section">
+                <div class="section-title">Recognition</div>
+                <div class="setting-row model-row">
+                    <div class="setting-label">
+                        <span class="setting-icon">🧠</span>
+                        <span>Model</span>
+                    </div>
+                    <div class="model-control">
+                        <select id="model" class="setting-control">
+                            <option value="nemo-parakeet-tdt-0.6b-v3" data-size="2.4GB">Parakeet TDT v3</option>
+                            <option value="whisper-base" data-size="150MB">Whisper Base</option>
+                            <option value="onnx-community/whisper-large-v3-turbo" data-size="1.6GB">Whisper Large v3</option>
+                        </select>
+                        <span id="model-status" class="model-status"></span>
+                    </div>
+                </div>
+                <div id="model-download-row" class="setting-row download-row" style="display: none;">
+                    <div class="download-info">
+                        <span class="setting-icon">📥</span>
+                        <span id="download-text">Download required</span>
+                    </div>
+                    <div class="download-actions">
+                        <button id="download-model" class="btn-download">Download</button>
+                        <button id="cancel-download" class="btn-cancel" style="display: none;">Cancel</button>
+                    </div>
+                </div>
+                <div id="download-progress-row" class="progress-row" style="display: none;">
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <span id="progress-text" class="progress-text">0%</span>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="setting-icon">📊</span>
+                        <span>Voice Detection (VAD)</span>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="vad">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Output Section -->
+            <div class="section">
+                <div class="section-title">Output</div>
+                <div class="setting-row">
+                    <div class="setting-label">
+                        <span class="setting-icon">📋</span>
+                        <span>Mode</span>
+                    </div>
+                    <select id="output-mode" class="setting-control">
+                        <option value="clipboard">Clipboard</option>
+                        <option value="simulate_typing">Type Text</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Hotkey Section -->
+            <div class="section">
+                <div class="section-title">Shortcut</div>
+                <div class="setting-row hotkey-row">
+                    <div class="setting-label">
+                        <span class="setting-icon">⌨️</span>
+                        <span>Hotkey</span>
+                    </div>
+                    <div class="hotkey-capture">
+                        <button id="hotkey-btn" class="hotkey-btn">
+                            <kbd id="hotkey-display">⌥ Space</kbd>
+                        </button>
+                        <button id="hotkey-reset" class="btn-icon-small" title="Reset">↺</button>
+                    </div>
+                </div>
+                <p class="hint">Click to change • Hold to record, release to transcribe</p>
+            </div>
+        </div>
+
+        <!-- Save Button -->
+        <div class="actions">
+            <button id="save-settings" class="btn-save">
+                <span>Save Settings</span>
+            </button>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>v0.1.0</span>
+            <span class="dot">•</span>
+            <span>Option+Space to record</span>
+        </footer>
+    </div>
+
+    <script type="module" src="settings.js"></script>
+</body>
+</html>
