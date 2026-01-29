@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{
@@ -48,8 +48,9 @@ fn save_config_to_file(config: &Config) -> Result<(), String> {
 struct BackendState {
     is_recording: bool,
     recording_start: Option<Instant>,
-    recording_process: Option<Child>,
+    daemon_stdin: Option<std::process::ChildStdin>,
     config: Config,
+    model_loaded: bool,
 }
 
 impl Default for BackendState {
@@ -57,8 +58,9 @@ impl Default for BackendState {
         Self {
             is_recording: false,
             recording_start: None,
-            recording_process: None,
+            daemon_stdin: None,
             config: load_config_from_file(),
+            model_loaded: false,
         }
     }
 }
@@ -300,39 +302,25 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn start_python_recording(config: &Config, app: &AppHandle) -> Option<Child> {
-    let script_path = format!("{}/python/record_and_transcribe.py", PROJECT_PATH);
+fn start_daemon(app: &AppHandle, state: SharedState) -> bool {
+    let script_path = format!("{}/python/backend_daemon.py", PROJECT_PATH);
     
     let mut cmd = Command::new(PYTHON_PATH);
     cmd.arg(&script_path)
-        .arg("--output")
-        .arg(&config.output_mode)
-        .arg("--model")
-        .arg(&config.model)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     
-    // Add device if specified
-    if let Some(device_id) = config.device_id {
-        cmd.arg("--device").arg(device_id.to_string());
-    }
-    
-    // Add VAD flag if enabled
-    if config.use_vad {
-        cmd.arg("--vad");
-    }
-    
     match cmd.spawn() {
         Ok(mut child) => {
-            log::info!("Started Python recording (device {:?}, model {}, vad {}, PID: {:?})", 
-                config.device_id, config.model, config.use_vad, child.id());
+            log::info!("Started Python daemon (PID: {:?})", child.id());
             
-            // Spawn thread to read audio levels and transcription from stdout
+            let stdin = child.stdin.take();
+            
+            // Spawn thread to read daemon output
             if let Some(stdout) = child.stdout.take() {
                 let app_handle = app.clone();
                 std::thread::spawn(move || {
-                    use std::io::{BufRead, BufReader};
                     let reader = BufReader::new(stdout);
                     for line in reader.lines() {
                         if let Ok(line) = line {
@@ -341,12 +329,25 @@ fn start_python_recording(config: &Config, app: &AppHandle) -> Option<Child> {
                                 if let Some(level) = json.get("audio_level").and_then(|l| l.as_f64()) {
                                     let _ = app_handle.emit("audio_level", level);
                                 }
+                                // Status updates
+                                if let Some(status) = json.get("status").and_then(|s| s.as_str()) {
+                                    log::info!("Daemon status: {}", status);
+                                    if status == "model_loaded" {
+                                        let _ = app_handle.emit("model_ready", ());
+                                    }
+                                }
                                 // Transcription result
                                 if let Some(text) = json.get("text").and_then(|t| t.as_str()) {
                                     log::info!("Transcription result: {}", text);
+                                    let transcription_time = json.get("transcription_time")
+                                        .and_then(|t| t.as_f64())
+                                        .unwrap_or(0.0);
+                                    log::info!("Transcription took: {:.2}s", transcription_time);
+                                    
                                     let _ = app_handle.emit("transcription_done", serde_json::json!({
                                         "text": text,
-                                        "copied": true
+                                        "copied": json.get("copied").and_then(|c| c.as_bool()).unwrap_or(false),
+                                        "typed": json.get("typed").and_then(|t| t.as_bool()).unwrap_or(false)
                                     }));
                                     
                                     // Hide overlay after a delay
@@ -358,43 +359,53 @@ fn start_python_recording(config: &Config, app: &AppHandle) -> Option<Child> {
                                 }
                                 // Error
                                 if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
-                                    log::warn!("Transcription error: {}", error);
+                                    log::warn!("Daemon error: {}", error);
                                     let _ = app_handle.emit("transcription_done", serde_json::json!({
                                         "text": "",
                                         "error": error
                                     }));
+                                    
+                                    // Hide overlay after a delay
+                                    let app_inner = app_handle.clone();
+                                    std::thread::sleep(std::time::Duration::from_secs(1));
+                                    if let Some(window) = app_inner.get_webview_window("overlay") {
+                                        let _ = window.hide();
+                                    }
                                 }
                             }
                         }
                     }
+                    log::warn!("Daemon stdout reader ended");
                 });
             }
             
-            Some(child)
+            // Store stdin for sending commands
+            let state_clone = state.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut state = state_clone.lock().await;
+                state.daemon_stdin = stdin;
+            });
+            
+            true
         }
         Err(e) => {
-            log::error!("Failed to start Python recording: {}", e);
-            None
+            log::error!("Failed to start Python daemon: {}", e);
+            false
         }
     }
 }
 
-fn stop_python_recording(mut child: Child) {
-    // Send newline to stdin to signal stop
-    if let Some(ref mut stdin) = child.stdin {
-        let _ = stdin.write_all(b"\n");
-        let _ = stdin.flush();
+fn send_daemon_command(stdin: &mut std::process::ChildStdin, cmd: &serde_json::Value) -> bool {
+    let json_str = serde_json::to_string(cmd).unwrap_or_default();
+    if let Err(e) = writeln!(stdin, "{}", json_str) {
+        log::error!("Failed to send command to daemon: {}", e);
+        return false;
     }
-    
-    // Wait for the process to complete (transcription handled by reader thread)
-    match child.wait() {
-        Ok(status) => {
-            log::info!("Python process exited with status: {:?}", status);
-        }
-        Err(e) => {
-            log::error!("Failed to wait for Python process: {}", e);
-        }
+    if let Err(e) = stdin.flush() {
+        log::error!("Failed to flush daemon stdin: {}", e);
+        return false;
     }
+    true
 }
 
 fn setup_global_shortcut(app: &AppHandle, state: SharedState) -> Result<(), Box<dyn std::error::Error>> {
@@ -407,7 +418,6 @@ fn setup_global_shortcut(app: &AppHandle, state: SharedState) -> Result<(), Box<
         let app_clone = app_handle.clone();
         let state_clone = state.clone();
         
-        // Handle in a blocking manner to ensure proper state management
         match event.state() {
             ShortcutState::Pressed => {
                 let app_clone2 = app_clone.clone();
@@ -423,8 +433,19 @@ fn setup_global_shortcut(app: &AppHandle, state: SharedState) -> Result<(), Box<
                     state.is_recording = true;
                     state.recording_start = Some(Instant::now());
                     
-                    // Start Python recording process with current config
-                    state.recording_process = start_python_recording(&state.config, &app_clone2);
+                    // Get config before mutable borrow
+                    let device = state.config.device_id;
+                    
+                    // Send start_recording command to daemon
+                    if let Some(ref mut stdin) = state.daemon_stdin {
+                        let cmd = serde_json::json!({
+                            "cmd": "start_recording",
+                            "device": device
+                        });
+                        send_daemon_command(stdin, &cmd);
+                    } else {
+                        log::error!("Daemon not running!");
+                    }
                     
                     log::info!("Recording started");
                     
@@ -459,18 +480,20 @@ fn setup_global_shortcut(app: &AppHandle, state: SharedState) -> Result<(), Box<
                         "duration": duration
                     }));
                     
-                    // Stop Python recording (transcription handled by stdout reader thread)
-                    if let Some(child) = state.recording_process.take() {
+                    // Get config before mutable borrow
+                    let output_mode = state.config.output_mode.clone();
+                    
+                    // Send stop_and_transcribe command to daemon
+                    if let Some(ref mut stdin) = state.daemon_stdin {
                         let _ = app_clone2.emit("transcription_started", ());
                         
-                        // Release the lock before blocking operation
-                        drop(state);
-                        
-                        tauri::async_runtime::spawn_blocking(move || {
-                            stop_python_recording(child);
+                        let cmd = serde_json::json!({
+                            "cmd": "stop_and_transcribe",
+                            "output": output_mode
                         });
+                        send_daemon_command(stdin, &cmd);
                     } else {
-                        log::warn!("No recording process to stop");
+                        log::error!("Daemon not running!");
                         
                         // Hide overlay
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -521,6 +544,36 @@ pub fn run() {
             if let Err(e) = setup_global_shortcut(app.handle(), state_clone) {
                 log::error!("Failed to setup global shortcut: {}", e);
             }
+            
+            // Start daemon and load model
+            let state_clone = state.clone();
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                // Start daemon
+                if start_daemon(&app_handle, state_clone.clone()) {
+                    // Give daemon time to start
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    
+                    // Load model
+                    let config = tauri::async_runtime::block_on(async {
+                        let state = state_clone.lock().await;
+                        state.config.clone()
+                    });
+                    
+                    tauri::async_runtime::block_on(async {
+                        let mut state = state_clone.lock().await;
+                        if let Some(ref mut stdin) = state.daemon_stdin {
+                            let cmd = serde_json::json!({
+                                "cmd": "load_model",
+                                "model": config.model
+                            });
+                            send_daemon_command(stdin, &cmd);
+                            state.model_loaded = true;
+                            log::info!("Model load command sent: {}", config.model);
+                        }
+                    });
+                }
+            });
 
             // Center overlay at top of screen
             if let Some(window) = app.get_webview_window("overlay") {
