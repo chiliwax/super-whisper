@@ -13,8 +13,61 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::Mutex;
 
-const PYTHON_PATH: &str = "/Users/thibault/Documents/WORK/super-whisper/.venv/bin/python";
-const PROJECT_PATH: &str = "/Users/thibault/Documents/WORK/super-whisper";
+// Dev mode fallback paths (only used if sidecar not available)
+const DEV_PYTHON_PATH: &str = "/Users/thibault/Documents/WORK/super-whisper/.venv/bin/python";
+const DEV_PROJECT_PATH: &str = "/Users/thibault/Documents/WORK/super-whisper";
+
+fn is_dev_mode() -> bool {
+    cfg!(debug_assertions)
+}
+
+fn get_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
+    // In bundled app, sidecar is in the same directory as the main executable (Contents/MacOS/)
+    // Tauri strips the target triple suffix when bundling
+    
+    // First, try the bundled location (no suffix)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let sidecar_name = if cfg!(target_os = "windows") {
+                "superwhisper-backend.exe"
+            } else {
+                "superwhisper-backend"
+            };
+            let bundled_path = exe_dir.join(sidecar_name);
+            if bundled_path.exists() {
+                log::info!("Found bundled sidecar at: {:?}", bundled_path);
+                return Some(bundled_path);
+            }
+        }
+    }
+    
+    // Fallback: try with target triple (for dev builds)
+    let target = if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "superwhisper-backend-aarch64-apple-darwin"
+        } else {
+            "superwhisper-backend-x86_64-apple-darwin"
+        }
+    } else if cfg!(target_os = "windows") {
+        "superwhisper-backend-x86_64-pc-windows-msvc.exe"
+    } else {
+        "superwhisper-backend-x86_64-unknown-linux-gnu"
+    };
+    
+    // Try in binaries folder (for dev)
+    let dev_path = PathBuf::from(DEV_PROJECT_PATH)
+        .join("src-tauri")
+        .join("binaries")
+        .join(target);
+    
+    if dev_path.exists() {
+        log::info!("Found dev sidecar at: {:?}", dev_path);
+        return Some(dev_path);
+    }
+    
+    log::warn!("Sidecar not found");
+    None
+}
 
 fn get_config_path() -> PathBuf {
     let config_dir = dirs::config_dir()
@@ -102,44 +155,63 @@ pub struct AudioDevice {
     pub is_default: bool,
 }
 
+fn get_sidecar_or_python_command(app: Option<&AppHandle>) -> (String, Vec<String>) {
+    // Try sidecar first
+    if let Some(app) = app {
+        if let Some(sidecar_path) = get_sidecar_path(app) {
+            if sidecar_path.exists() {
+                return (sidecar_path.to_string_lossy().to_string(), vec![]);
+            }
+        }
+    }
+    
+    // Fallback to Python in dev mode
+    if is_dev_mode() {
+        let script_path = format!("{}/python/backend_daemon.py", DEV_PROJECT_PATH);
+        return (DEV_PYTHON_PATH.to_string(), vec![script_path]);
+    }
+    
+    ("".to_string(), vec![])
+}
+
 // Tauri commands
 #[tauri::command]
-async fn get_devices(_app: AppHandle) -> Result<Vec<AudioDevice>, String> {
+async fn get_devices(app: AppHandle) -> Result<Vec<AudioDevice>, String> {
     log::info!("get_devices called");
     
-    let python_script = r#"
-import sounddevice as sd
-import json
-devices = sd.query_devices()
-default_input = sd.default.device[0]
-result = []
-for i, dev in enumerate(devices):
-    if dev['max_input_channels'] > 0:
-        result.append({
-            'id': i,
-            'name': dev['name'],
-            'is_default': i == default_input
-        })
-print(json.dumps(result))
-"#;
-
-    let output = Command::new(PYTHON_PATH)
-        .arg("-c")
-        .arg(python_script)
+    let (cmd_path, mut args) = get_sidecar_or_python_command(Some(&app));
+    
+    if cmd_path.is_empty() {
+        log::error!("No sidecar or Python available");
+        return Ok(vec![]);
+    }
+    
+    args.push("--list-devices".to_string());
+    
+    let output = Command::new(&cmd_path)
+        .args(&args)
         .output();
     
     match output {
         Ok(output) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Ok(devices) = serde_json::from_str::<Vec<AudioDevice>>(&stdout) {
-                    log::info!("Parsed {} audio devices", devices.len());
-                    return Ok(devices);
+                // Parse the JSON response
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                    if let Some(devices) = json.get("devices") {
+                        if let Ok(devices) = serde_json::from_value::<Vec<AudioDevice>>(devices.clone()) {
+                            log::info!("Parsed {} audio devices", devices.len());
+                            return Ok(devices);
+                        }
+                    }
                 }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::error!("Command failed: {}", stderr);
             }
         }
         Err(e) => {
-            log::error!("Failed to run Python: {}", e);
+            log::error!("Failed to run command: {}", e);
         }
     }
     
@@ -172,52 +244,75 @@ pub struct ModelStatus {
 }
 
 #[tauri::command]
-async fn check_model_status(model: String) -> Result<ModelStatus, String> {
-    let script_path = format!("{}/python/model_manager.py", PROJECT_PATH);
+async fn check_model_status(app: AppHandle, model: String) -> Result<ModelStatus, String> {
+    log::info!("Checking model status: {}", model);
     
-    let output = Command::new(PYTHON_PATH)
-        .arg(&script_path)
-        .arg("--check")
-        .arg(&model)
+    let (cmd_path, mut args) = get_sidecar_or_python_command(Some(&app));
+    
+    if cmd_path.is_empty() {
+        return Ok(ModelStatus {
+            downloaded: false,
+            path: None,
+            size: None,
+            error: Some("No sidecar or Python available".to_string()),
+        });
+    }
+    
+    args.push("--check-model".to_string());
+    args.push(model.clone());
+    
+    let output = Command::new(&cmd_path)
+        .args(&args)
         .output()
         .map_err(|e| e.to_string())?;
     
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str(&stdout).map_err(|e| e.to_string())
-    } else {
-        Ok(ModelStatus {
-            downloaded: false,
-            path: None,
-            size: None,
-            error: Some("Failed to check model".to_string()),
-        })
+        // Parse the JSON response - it may have multiple lines
+        for line in stdout.lines() {
+            if let Ok(status) = serde_json::from_str::<ModelStatus>(line) {
+                return Ok(status);
+            }
+        }
     }
+    
+    Ok(ModelStatus {
+        downloaded: false,
+        path: None,
+        size: None,
+        error: Some("Failed to check model".to_string()),
+    })
 }
 
 #[tauri::command]
 async fn download_model(app: AppHandle, model: String) -> Result<(), String> {
-    let script_path = format!("{}/python/model_manager.py", PROJECT_PATH);
-    
     log::info!("Downloading model: {}", model);
     let _ = app.emit("model_download_started", &model);
     
-    let output = Command::new(PYTHON_PATH)
-        .arg(&script_path)
-        .arg("--download")
-        .arg(&model)
+    let (cmd_path, mut args) = get_sidecar_or_python_command(Some(&app));
+    
+    if cmd_path.is_empty() {
+        let _ = app.emit("model_download_error", &model);
+        return Err("No sidecar or Python available".to_string());
+    }
+    
+    args.push("--download-model".to_string());
+    args.push(model.clone());
+    
+    let output = Command::new(&cmd_path)
+        .args(&args)
         .output()
         .map_err(|e| e.to_string())?;
     
     if output.status.success() {
         log::info!("Model downloaded: {}", model);
         let _ = app.emit("model_download_done", &model);
-        Ok(())
+        return Ok(());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("Model download failed: {}", stderr);
         let _ = app.emit("model_download_error", &model);
-        Err(format!("Download failed: {}", stderr))
+        return Err(format!("Download failed: {}", stderr));
     }
 }
 
@@ -303,11 +398,33 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn start_daemon(app: &AppHandle, state: SharedState) -> bool {
-    let script_path = format!("{}/python/backend_daemon.py", PROJECT_PATH);
+    let mut cmd: Command;
     
-    let mut cmd = Command::new(PYTHON_PATH);
-    cmd.arg(&script_path)
-        .stdin(Stdio::piped())
+    // Try sidecar first (production), fallback to Python (dev)
+    if let Some(sidecar_path) = get_sidecar_path(app) {
+        if sidecar_path.exists() {
+            log::info!("Starting daemon from sidecar: {:?}", sidecar_path);
+            cmd = Command::new(sidecar_path);
+        } else if is_dev_mode() {
+            log::info!("Sidecar not found, using Python in dev mode");
+            let script_path = format!("{}/python/backend_daemon.py", DEV_PROJECT_PATH);
+            cmd = Command::new(DEV_PYTHON_PATH);
+            cmd.arg(&script_path);
+        } else {
+            log::error!("Sidecar not found and not in dev mode!");
+            return false;
+        }
+    } else if is_dev_mode() {
+        log::info!("Using Python daemon in dev mode");
+        let script_path = format!("{}/python/backend_daemon.py", DEV_PROJECT_PATH);
+        cmd = Command::new(DEV_PYTHON_PATH);
+        cmd.arg(&script_path);
+    } else {
+        log::error!("Cannot determine daemon path!");
+        return false;
+    }
+    
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     

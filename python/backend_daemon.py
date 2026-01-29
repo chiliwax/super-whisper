@@ -247,6 +247,97 @@ def type_text(text):
         return False
 
 
+def list_devices():
+    """List available audio input devices."""
+    try:
+        devices = sd.query_devices()
+        default_input = sd.default.device[0]
+        result = []
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0:
+                result.append({
+                    'id': i,
+                    'name': dev['name'],
+                    'is_default': i == default_input
+                })
+        send_response({"devices": result})
+    except Exception as e:
+        send_error(f"Failed to list devices: {e}")
+
+
+def check_model_status(model_name):
+    """Check if a model is downloaded."""
+    try:
+        # Model name to HuggingFace repo mapping
+        model_repos = {
+            "nemo-parakeet-tdt-0.6b-v3": "onnx-community/nemo-parakeet-tdt-0.6b-v3",
+            "nemo-parakeet-tdt-1.1b-v2": "onnx-community/nemo-parakeet-tdt-1.1b-v2",
+            "whisper-tiny": "onnx-community/whisper-tiny",
+            "whisper-base": "istupakov/whisper-base-onnx",
+            "whisper-small": "onnx-community/whisper-small",
+            "whisper-medium": "onnx-community/whisper-medium",
+            "whisper-large-v3": "onnx-community/whisper-large-v3",
+            "whisper-large-v3-turbo": "onnx-community/whisper-large-v3-turbo",
+            "moonshine-tiny": "onnx-community/moonshine-tiny",
+            "moonshine-base": "onnx-community/moonshine-base",
+        }
+        
+        repo_id = model_repos.get(model_name, f"onnx-community/{model_name}")
+        
+        # Check HuggingFace cache
+        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+        repo_folder_name = "models--" + repo_id.replace("/", "--")
+        model_path = os.path.join(cache_dir, repo_folder_name)
+        
+        if os.path.exists(model_path):
+            # Calculate size by following symlinks
+            total_size = 0
+            snapshots_dir = os.path.join(model_path, "snapshots")
+            if os.path.exists(snapshots_dir):
+                for root, dirs, files in os.walk(snapshots_dir):
+                    for f in files:
+                        file_path = os.path.join(root, f)
+                        if os.path.islink(file_path):
+                            real_path = os.path.realpath(file_path)
+                            if os.path.exists(real_path):
+                                total_size += os.path.getsize(real_path)
+                        elif os.path.isfile(file_path):
+                            total_size += os.path.getsize(file_path)
+            
+            # Format size
+            if total_size > 1024 * 1024 * 1024:
+                size_str = f"{total_size / (1024 * 1024 * 1024):.1f} GB"
+            elif total_size > 1024 * 1024:
+                size_str = f"{total_size / (1024 * 1024):.0f} MB"
+            else:
+                size_str = f"{total_size / 1024:.0f} KB"
+            
+            send_response({
+                "downloaded": True,
+                "path": model_path,
+                "size": size_str
+            })
+        else:
+            send_response({
+                "downloaded": False,
+                "path": None,
+                "size": None
+            })
+    except Exception as e:
+        send_error(f"Failed to check model: {e}")
+
+
+def download_model_cmd(model_name):
+    """Download a model."""
+    try:
+        import onnx_asr
+        send_response({"status": "downloading", "model": model_name})
+        onnx_asr.load_model(model_name, providers=["CPUExecutionProvider"])
+        send_response({"status": "download_complete", "model": model_name})
+    except Exception as e:
+        send_error(f"Failed to download model: {e}")
+
+
 def handle_command(cmd_data):
     """Handle a command from stdin."""
     global audio_data
@@ -283,6 +374,17 @@ def handle_command(cmd_data):
         audio = stop_recording()
         if audio is not None:
             transcribe(audio, output_mode)
+    
+    elif cmd == 'list_devices':
+        list_devices()
+    
+    elif cmd == 'check_model':
+        model = cmd_data.get('model', 'nemo-parakeet-tdt-0.6b-v3')
+        check_model_status(model)
+    
+    elif cmd == 'download_model':
+        model = cmd_data.get('model', 'nemo-parakeet-tdt-0.6b-v3')
+        download_model_cmd(model)
     
     elif cmd == 'ping':
         send_response({"status": "pong", "model_loaded": current_model is not None})
@@ -334,4 +436,43 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='SuperWhisper Backend Daemon')
+    parser.add_argument('--list-devices', action='store_true', help='List audio devices and exit')
+    parser.add_argument('--check-model', type=str, help='Check if model is downloaded and exit')
+    parser.add_argument('--download-model', type=str, help='Download model and exit')
+    
+    args = parser.parse_args()
+    
+    if args.list_devices:
+        # One-shot mode: list devices and exit
+        try:
+            devices = sd.query_devices()
+            default_input = sd.default.device[0]
+            result = []
+            for i, dev in enumerate(devices):
+                if dev['max_input_channels'] > 0:
+                    result.append({
+                        'id': i,
+                        'name': dev['name'],
+                        'is_default': i == default_input
+                    })
+            print(json.dumps({"devices": result}))
+        except Exception as e:
+            print(json.dumps({"error": str(e)}))
+        sys.exit(0)
+    
+    elif args.check_model:
+        # One-shot mode: check model status
+        check_model_status(args.check_model)
+        sys.exit(0)
+    
+    elif args.download_model:
+        # One-shot mode: download model
+        download_model_cmd(args.download_model)
+        sys.exit(0)
+    
+    else:
+        # Normal daemon mode
+        main()
