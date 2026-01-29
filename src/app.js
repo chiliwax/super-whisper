@@ -124,7 +124,7 @@ class OverlayApp {
             this.status.textContent = 'Ready';
             this.timer.textContent = '0:00';
             this.startIdleAnimation();
-            this.hideOverlay();
+            // Don't hide - overlay stays visible
         }, 1200);
     }
     

@@ -350,12 +350,7 @@ fn start_daemon(app: &AppHandle, state: SharedState) -> bool {
                                         "typed": json.get("typed").and_then(|t| t.as_bool()).unwrap_or(false)
                                     }));
                                     
-                                    // Hide overlay after a delay
-                                    let app_inner = app_handle.clone();
-                                    std::thread::sleep(std::time::Duration::from_secs(1));
-                                    if let Some(window) = app_inner.get_webview_window("overlay") {
-                                        let _ = window.hide();
-                                    }
+                                    // Don't hide overlay - let it stay visible
                                 }
                                 // Error
                                 if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
@@ -365,12 +360,7 @@ fn start_daemon(app: &AppHandle, state: SharedState) -> bool {
                                         "error": error
                                     }));
                                     
-                                    // Hide overlay after a delay
-                                    let app_inner = app_handle.clone();
-                                    std::thread::sleep(std::time::Duration::from_secs(1));
-                                    if let Some(window) = app_inner.get_webview_window("overlay") {
-                                        let _ = window.hide();
-                                    }
+                                    // Don't hide overlay - let it stay visible
                                 }
                             }
                         }

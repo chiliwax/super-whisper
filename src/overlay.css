@@ -187,6 +187,19 @@ html, body {
 
 #overlay.done .pill {
     border-color: rgba(48, 209, 88, 0.3);
+    justify-content: center;
+}
+
+#overlay.done .indicator {
+    display: none;
+}
+
+#overlay.done .timer {
+    display: none;
+}
+
+#overlay.done #waveform {
+    display: none;
 }
 
 /* Idle - minimal state */
