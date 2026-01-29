@@ -1,4 +1,5 @@
 import onnx_asr
+from onnx_asr.loader import load_vad
 import sounddevice as sd
 import numpy as np
 import scipy.io.wavfile as wav
@@ -12,6 +13,7 @@ import threading
 SAMPLE_RATE = 16000
 CHANNELS = 1
 DEVICE_ID = None  # Will be set by user or default
+USE_VAD = False   # Enable VAD for segmentation
 
 # macOS system sounds for feedback
 SOUND_START = "/System/Library/Sounds/Pop.aiff"      # Recording started
@@ -24,6 +26,7 @@ recording = False
 transcribing = False  # Prevent overlapping transcriptions
 audio_data = []
 model = None
+vad_model = None
 
 def play_sound(sound_path):
     """Play a system sound asynchronously."""
@@ -52,7 +55,7 @@ def start_recording():
 
 def do_transcription(audio_int16):
     """Run transcription in background thread."""
-    global transcribing, model
+    global transcribing, model, vad_model, USE_VAD
     
     try:
         # Check audio level
@@ -65,10 +68,16 @@ def do_transcription(audio_int16):
             print("⚠️  Audio too quiet - check your microphone!")
             return
         
-        # Save to temp file and transcribe
+        # Save to temp file
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             wav.write(f.name, SAMPLE_RATE, audio_int16)
-            result = model.recognize(f.name)
+            
+            if USE_VAD and vad_model is not None:
+                # Use VAD to segment and transcribe
+                result = do_vad_transcription(f.name, audio_int16)
+            else:
+                # Standard transcription without VAD
+                result = model.recognize(f.name)
             
             if result and result.strip():
                 play_sound(SOUND_DONE)
@@ -78,6 +87,48 @@ def do_transcription(audio_int16):
                 print("⚠️  No speech detected in audio.")
     finally:
         transcribing = False
+
+def do_vad_transcription(filepath, audio_int16):
+    """Transcribe using VAD segmentation for better accuracy on long audio."""
+    global model, vad_model
+    
+    # Convert to float32 for VAD (normalized -1 to 1)
+    audio_float = audio_int16.astype(np.float32) / 32767.0
+    
+    # Prepare batch format for VAD
+    waveforms = audio_float.reshape(1, -1)  # Shape: (1, samples)
+    waveforms_len = np.array([len(audio_float)], dtype=np.int64)
+    
+    # Get speech segments with VAD
+    segments_iter = vad_model.segment_batch(
+        waveforms, 
+        waveforms_len, 
+        sample_rate=SAMPLE_RATE
+    )
+    
+    # Collect all speech segments
+    all_texts = []
+    for segment_list in segments_iter:
+        segments = list(segment_list)
+        if not segments:
+            continue
+            
+        print(f"   VAD found {len(segments)} speech segment(s)")
+        
+        for i, (start, end) in enumerate(segments):
+            # Extract segment audio
+            segment_audio = audio_int16[start:end]
+            if len(segment_audio) < SAMPLE_RATE * 0.1:  # Skip very short segments (< 0.1s)
+                continue
+            
+            # Save segment to temp file and transcribe
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as seg_f:
+                wav.write(seg_f.name, SAMPLE_RATE, segment_audio)
+                result = model.recognize(seg_f.name)
+                if result and result.strip():
+                    all_texts.append(result.strip())
+    
+    return " ".join(all_texts)
 
 def stop_recording_and_transcribe():
     global recording, transcribing, audio_data, stream
@@ -162,40 +213,56 @@ def select_microphone():
         sys.exit(1)
 
 def main():
-    global model, DEVICE_ID
+    global model, vad_model, DEVICE_ID, USE_VAD
     
-    # Handle command line arguments
-    if len(sys.argv) > 1:
-        if sys.argv[1] in ("-l", "--list"):
+    # Parse all arguments
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-l", "--list"):
             list_microphones()
             sys.exit(0)
-        elif sys.argv[1] in ("-d", "--device"):
-            if len(sys.argv) > 2:
-                DEVICE_ID = int(sys.argv[2])
+        elif arg in ("-d", "--device"):
+            if i + 1 < len(args):
+                DEVICE_ID = int(args[i + 1])
                 dev = sd.query_devices(DEVICE_ID)
                 print(f"🎤 Using microphone: {dev['name']}")
+                i += 1
             else:
                 print("❌ Please specify device number: python main.py -d <number>")
                 sys.exit(1)
-        elif sys.argv[1] in ("-h", "--help"):
+        elif arg in ("-h", "--help"):
             print("Usage: python main.py [options]")
             print("  -l, --list      List available microphones")
             print("  -d, --device N  Use microphone number N")
             print("  -s, --select    Interactive microphone selection")
+            print("  --vad           Enable VAD (Voice Activity Detection) for segmentation")
             print("  -h, --help      Show this help")
             sys.exit(0)
-        elif sys.argv[1] in ("-s", "--select"):
+        elif arg in ("-s", "--select"):
             select_microphone()
+        elif arg == "--vad":
+            USE_VAD = True
+        i += 1
     
     # Show current microphone
     if DEVICE_ID is None:
         default_dev = sd.query_devices(sd.default.device[0])
         print(f"🎤 Using default microphone: {default_dev['name']}")
     
+    # Load VAD model if enabled
+    if USE_VAD:
+        print("Loading Silero VAD model...")
+        vad_model = load_vad("silero", providers=["CPUExecutionProvider"])
+        print("✅ VAD enabled (audio will be segmented)")
+    
     print("Loading Parakeet TDT v3 model...")
     model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", providers=["CPUExecutionProvider"])
     print("✅ Model loaded!")
-    print("\n🎤 Hold Right ⌘ (Command) to record, release to transcribe.")
+    
+    vad_status = " [VAD ON]" if USE_VAD else ""
+    print(f"\n🎤 Hold Right ⌘ (Command) to record, release to transcribe.{vad_status}")
     print("   Press Ctrl+C to quit.\n")
     
     with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
